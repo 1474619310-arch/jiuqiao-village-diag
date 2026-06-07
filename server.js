@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -139,7 +140,7 @@ app.get('/api/submissions', (req, res) => {
   res.json(all);
 });
 
-// 导出 CSV（需密码）
+// 导出 Excel（需密码）
 app.get('/api/export', (req, res) => {
   const pwd = req.query.password || req.headers['x-admin-password'] || '';
   if (pwd !== ADMIN_PASSWORD) {
@@ -148,14 +149,61 @@ app.get('/api/export', (req, res) => {
   const all = loadAll();
   if (!all.length) return res.send('暂无数据');
 
-  const keys = [...new Set(all.flatMap(Object.keys))];
-  const csv = [
-    keys.join(','),
-    ...all.map(r => keys.map(k => `"${(r[k] || '').toString().replace(/"/g, '""')}"`).join(','))
-  ].join('\n');
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="jiuqiao-diag-data.csv"');
-  res.send('\uFEFF' + csv);
+  // 按顺序整理字段，中文表头
+  const fieldMap = [
+    ['id', '记录ID'],
+    ['submitTime', '提交时间'],
+    ['villageName', '村庄名称'],
+    ['region', '所在地区'],
+    ['phone', '手机号'],
+    ['wechat', '微信号'],
+    ['projectType', '项目类型'],
+    ['areaSize', '面积规模'],
+    ['population', '常住人口'],
+    ['visitors', '年客流量'],
+    ['formats', '已有业态'],
+    ['revenue', '年营收'],
+    ['teamSize', '团队人数'],
+    ['stage', '当前阶段'],
+    ['decision', '决策人'],
+    ['urgent', '最迫切问题'],
+    ['totalScore', '总分'],
+    ['worstDim', '最弱维度'],
+    ['dimensionScores.调研与品牌定位', '调研与品牌定位'],
+    ['dimensionScores.产品与内容设计', '产品与内容设计'],
+    ['dimensionScores.宣传与引流', '宣传与引流'],
+    ['dimensionScores.活动策划', '活动策划'],
+    ['dimensionScores.产业运营', '产业运营'],
+    ['ip', 'IP地址'],
+  ];
+
+  const headers = fieldMap.map(f => f[1]);
+  const rows = all.map(r => {
+    return fieldMap.map(f => {
+      const key = f[0];
+      if (key.startsWith('dimensionScores.')) {
+        const dim = key.replace('dimensionScores.', '');
+        const ds = r.dimensionScores || {};
+        return ds[dim] !== undefined ? ds[dim] : '';
+      }
+      return r[key] !== undefined ? String(r[key]) : '';
+    });
+  });
+
+  const wsData = [headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // 设置列宽
+  ws['!cols'] = headers.map(() => ({ wch: 18 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '诊断数据');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="jiuqiao-diag-data.xlsx"');
+  res.send(buf);
 });
 
 // 数据统计
